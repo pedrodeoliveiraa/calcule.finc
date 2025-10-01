@@ -531,6 +531,19 @@
             border-bottom: none;
         }
         
+        .auto-reset-info {
+            background-color: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 0 var(--border-radius) var(--border-radius) 0;
+        }
+        
+        .dark-mode .auto-reset-info {
+            background-color: #0c5460;
+            color: #d1ecf1;
+        }
+        
         @media (max-width: 768px) {
             .content {
                 flex-direction: column;
@@ -629,7 +642,7 @@
                     
                     <div class="btn-group">
                         <button type="button" id="add-overtime" class="btn-primary">Adicionar Hora Extra</button>
-                        <button type="button" id="clear-all" class="btn-warning">Limpar Tudo</button>
+                        <button type="button" id="clear-all" class="btn-warning">Limpar Este Mês</button>
                     </div>
                 </form>
                 
@@ -638,9 +651,10 @@
                     <p style="text-align: center; color: #777;">Nenhuma hora extra adicionada</p>
                 </div>
                 
-                <div class="info-box">
-                    <p><strong>Informações:</strong> A empresa fecha no dia 25 de cada mês.</p>
-                    <p>Horas extras após o dia 25 serão pagas no mês seguinte.</p>
+                <div class="auto-reset-info">
+                    <p><strong>⚠️ Atenção!</strong></p>
+                    <p>Horas extras feitas após o dia 25 serão automaticamente movidas para o próximo mês e pagas no 5º dia útil do mês subsequente.</p>
+                    <p><strong>Exemplo:</strong> Hora extra no dia 30/09 será paga em 05/11.</p>
                 </div>
             </div>
             
@@ -689,7 +703,7 @@
                     </div>
                     
                     <div class="payment-alert" id="payment-alert" style="display: none;">
-                        <p><strong>⚠️ Atenção!</strong></p>
+                        <p><strong>📅 Próximo Pagamento!</strong></p>
                         <p id="alert-message"></p>
                     </div>
                     
@@ -734,6 +748,7 @@
             loadFromLocalStorage();
             updatePaymentInfo();
             showPaymentAlert();
+            checkAutoReset();
         });
         
         // Configurar calendário
@@ -877,11 +892,14 @@
             
             // Limpar todas as horas extras
             document.getElementById('clear-all').addEventListener('click', function() {
-                clearAllOvertime();
+                clearCurrentMonthOvertime();
             });
             
             // Calcular ao alterar qualquer campo
-            document.getElementById('salary').addEventListener('input', calculate);
+            document.getElementById('salary').addEventListener('input', function() {
+                calculate();
+                saveToLocalStorage();
+            });
             
             // Toggle modo escuro
             document.getElementById('theme-toggle').addEventListener('click', toggleDarkMode);
@@ -915,22 +933,62 @@
         function saveToLocalStorage() {
             const data = {
                 overtimeEntries: overtimeEntries,
-                salary: document.getElementById('salary').value
+                salary: document.getElementById('salary').value,
+                lastSave: new Date().getTime()
             };
             localStorage.setItem('overtimeCalculatorData', JSON.stringify(data));
+            console.log('Dados salvos no localStorage:', data);
         }
         
         // Carregar dados do localStorage
         function loadFromLocalStorage() {
-            const savedData = localStorage.getItem('overtimeCalculatorData');
-            if (savedData) {
-                const data = JSON.parse(savedData);
-                overtimeEntries = data.overtimeEntries || [];
-                document.getElementById('salary').value = data.salary || '';
+            try {
+                const savedData = localStorage.getItem('overtimeCalculatorData');
+                if (savedData) {
+                    const data = JSON.parse(savedData);
+                    overtimeEntries = data.overtimeEntries || [];
+                    
+                    // Converter strings de data de volta para objetos Date
+                    overtimeEntries.forEach(entry => {
+                        entry.date = new Date(entry.date);
+                        entry.paymentDate = new Date(entry.paymentDate);
+                    });
+                    
+                    document.getElementById('salary').value = data.salary || '';
+                    
+                    if (overtimeEntries.length > 0) {
+                        updateOvertimeList();
+                        calculate();
+                    }
+                    console.log('Dados carregados do localStorage:', data);
+                }
+            } catch (error) {
+                console.error('Erro ao carregar dados do localStorage:', error);
+                overtimeEntries = [];
+            }
+        }
+        
+        // Verificar reset automático
+        function checkAutoReset() {
+            const today = new Date();
+            const currentDay = today.getDate();
+            
+            // Se for dia 26 ou posterior, mostrar apenas horas extras após dia 25
+            if (currentDay >= 26) {
+                const currentMonth = today.getMonth();
+                const currentYear = today.getFullYear();
+                
+                // Filtrar apenas horas extras após dia 25 do mês atual
+                overtimeEntries = overtimeEntries.filter(entry => {
+                    return entry.date.getDate() > 25 && 
+                           entry.date.getMonth() === currentMonth && 
+                           entry.date.getFullYear() === currentYear;
+                });
                 
                 if (overtimeEntries.length > 0) {
                     updateOvertimeList();
                     calculate();
+                    saveToLocalStorage();
                 }
             }
         }
@@ -941,23 +999,31 @@
             const month = entryDate.getMonth();
             const year = entryDate.getFullYear();
             
-            // Se for após o dia 25, pagamento será no PRÓXIMO MÊS
+            // Se for após o dia 25, pagamento será no PRÓXIMO MÊS + 1
             if (day > 25) {
-                // Próximo mês
+                // Pular um mês (dois meses à frente)
+                let paymentMonth = month + 2;
+                let paymentYear = year;
+                
+                // Ajustar se passar de dezembro
+                if (paymentMonth > 11) {
+                    paymentMonth = paymentMonth - 12;
+                    paymentYear = year + 1;
+                }
+                
+                // 5º dia útil do mês subsequente
+                return getFifthBusinessDay(paymentMonth, paymentYear);
+            } else {
+                // 5º dia útil do próximo mês
                 let paymentMonth = month + 1;
                 let paymentYear = year;
                 
-                // Se for dezembro, vai para janeiro do próximo ano
                 if (paymentMonth > 11) {
                     paymentMonth = 0;
                     paymentYear = year + 1;
                 }
                 
-                // 5º dia útil do PRÓXIMO mês
                 return getFifthBusinessDay(paymentMonth, paymentYear);
-            } else {
-                // 5º dia útil deste mês
-                return getFifthBusinessDay(month, year);
             }
         }
         
@@ -1178,9 +1244,16 @@
             saveToLocalStorage();
         }
         
-        // Limpar todas as horas extras
-        function clearAllOvertime() {
-            overtimeEntries = [];
+        // Limpar horas extras do mês atual
+        function clearCurrentMonthOvertime() {
+            const today = new Date();
+            const currentMonth = today.getMonth();
+            const currentYear = today.getFullYear();
+            
+            overtimeEntries = overtimeEntries.filter(entry => {
+                return entry.date.getMonth() !== currentMonth || entry.date.getFullYear() !== currentYear;
+            });
+            
             updateOvertimeList();
             calculate();
             saveToLocalStorage();
